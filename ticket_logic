@@ -1,0 +1,154 @@
+// 售票机核心逻辑模块
+// 实现自动售票机的完整业务逻辑
+// 功能特性：
+//   - 车票票价：2元、3元、4元、5元
+//   - 支持投币：1元、5元、10元
+//   - 自动计算找零并出票
+//   - 资金不足时触发报警
+
+module ticket_logic(
+    input clk,              // 系统时钟（消抖后100Hz）
+    input rst,              // 高电平有效的复位信号
+    input clear_sales,      // 总销售额清零信号（对应S0按键）
+    input coin_1,           // 1元投币触发信号（对应S1按键）
+    input coin_5,           // 5元投币触发信号（对应S2按键）
+    input coin_10,          // 10元投币触发信号（对应S3按键）
+    input [3:0] ticket_sel, // 车票选择信号（SW0-SW3对应2/3/4/5元车票）
+    input confirm,          // 交易确认信号（对应SW7拨码开关）
+    output reg [7:0] display_val,  // 待显示数值（票价/已投金额/找零）
+    output reg [7:0] total_sales,  // 总销售额
+    output reg [3:0] ticket_out,   // 出票指示LED（D1-D4对应不同票价车票）
+    output reg alarm,              // 资金不足报警信号
+    output reg [1:0] display_mode  // 显示模式：0=票价 1=已投金额 2=找零
+);
+
+    // 内部寄存器定义
+    reg [7:0] inserted_amount;  // 累计已投币金额
+    reg [7:0] ticket_price;     // 选中车票的票价
+    reg [7:0] change_amount;    // 应找零金额
+    
+    // 报警计时器（基于假设时钟频率，计时3秒）
+    reg [8:0] alarm_counter;
+    
+    // 状态机状态定义
+    localparam IDLE = 2'd0;        // 空闲状态（未投币）
+    localparam INSERTING = 2'd1;   // 投币状态（正在投币）
+    localparam DISPENSING = 2'd2;  // 出票状态（计算找零并出票）
+    localparam ALARMING = 2'd3;    // 报警状态（资金不足）
+    
+    reg [1:0] state;               // 状态机当前状态
+    reg confirm_prev;              // 确认信号前一状态（用于边沿检测）
+    
+    // 车票票价解码逻辑
+    always @(*) begin
+        case (ticket_sel)
+            4'b0001: ticket_price = 8'd2;   // SW0选中：2元车票
+            4'b0010: ticket_price = 8'd3;   // SW1选中：3元车票
+            4'b0100: ticket_price = 8'd4;   // SW2选中：4元车票
+            4'b1000: ticket_price = 8'd5;   // SW3选中：5元车票
+            default: ticket_price = 8'd0;   // 未选中任何车票
+        endcase
+    end
+    
+    // 主状态机逻辑
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            state <= IDLE;                  // 复位后进入空闲状态
+            inserted_amount <= 8'd0;        // 已投金额清零
+            change_amount <= 8'd0;          // 找零金额清零
+            total_sales <= 8'd0;            // 总销售额清零
+            ticket_out <= 4'b0000;          // 出票LED全灭
+            alarm <= 1'b0;                  // 报警信号关闭
+            alarm_counter <= 9'd0;          // 报警计时器清零
+            display_val <= 8'd0;            // 显示数值清零
+            display_mode <= 2'd0;           // 默认显示票价
+            confirm_prev <= 1'b0;           // 确认信号前态清零
+        end
+        else begin
+            confirm_prev <= confirm;        // 更新确认信号前一状态
+            
+            // 总销售额清零逻辑（S0按键触发）
+            if (clear_sales) begin
+                total_sales <= 8'd0;
+            end
+            
+            case (state)
+                IDLE: begin
+                    ticket_out <= 4'b0000;  // 出票LED全灭
+                    alarm <= 1'b0;          // 关闭报警
+                    inserted_amount <= 8'd0;// 已投金额清零
+                    change_amount <= 8'd0;  // 找零金额清零
+                    display_val <= ticket_price; // 显示选中车票的票价
+                    display_mode <= 2'd0;   // 显示模式：票价
+                    
+                    // 投币触发，进入投币状态
+                    if (coin_1 || coin_5 || coin_10) begin
+                        // 记录首次投币金额
+                        if (coin_1) inserted_amount <= 8'd1;
+                        else if (coin_5) inserted_amount <= 8'd5;
+                        else if (coin_10) inserted_amount <= 8'd10;
+                        state <= INSERTING;
+                    end
+                end
+                
+                INSERTING: begin
+                    display_val <= inserted_amount; // 显示已投金额
+                    display_mode <= 2'd1;           // 显示模式：已投金额
+                    
+                    // 接收后续投币，累加金额
+                    if (coin_1) inserted_amount <= inserted_amount + 8'd1;
+                    else if (coin_5) inserted_amount <= inserted_amount + 8'd5;
+                    else if (coin_10) inserted_amount <= inserted_amount + 8'd10;
+                    
+                    // 检测确认信号上升沿（触发交易确认）
+                    if (confirm && !confirm_prev) begin
+                        if (ticket_price == 0) begin
+                            // 未选中车票，返回空闲状态
+                            state <= IDLE;
+                        end
+                        else if (inserted_amount >= ticket_price) begin
+                            // 投币金额充足，计算找零并更新销售额
+                            change_amount <= inserted_amount - ticket_price;
+                            total_sales <= total_sales + ticket_price;
+                            state <= DISPENSING; // 进入出票状态
+                        end
+                        else begin
+                            // 投币金额不足，触发报警
+                            alarm_counter <= 9'd300;  // 100Hz时钟下，300个周期=3秒
+                            state <= ALARMING;        // 进入报警状态
+                        end
+                    end
+                end
+                
+                DISPENSING: begin
+                    display_val <= change_amount; // 显示找零金额
+                    display_mode <= 2'd2;         // 显示模式：找零
+                    
+                    // 根据选中的车票，点亮对应出票LED
+                    ticket_out <= ticket_sel;
+                    
+                    // 确认信号取消后，返回空闲状态
+                    if (!confirm) begin
+                        state <= IDLE;
+                    end
+                end
+                
+                ALARMING: begin
+                    alarm <= 1'b1;                  // 开启报警
+                    display_val <= inserted_amount; // 显示当前已投金额
+                    display_mode <= 2'd1;           // 显示模式：已投金额
+                    
+                    // 报警计时递减，计时结束后关闭报警
+                    if (alarm_counter > 0) begin
+                        alarm_counter <=  - 1'b1;
+                    end
+                    else begin
+                        alarm <= 1'b0;              // 关闭报警
+                        state <= INSERTING;         // 返回投币状态，允许继续投币
+                    end
+                end
+            endcase
+        end
+    end
+
+endmodule
