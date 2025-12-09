@@ -1,0 +1,102 @@
+// 自动售票机顶层模块
+// 集成所有功能模块，适配EGO1 FPGA开发板
+// 实验6_4：带投币输入和找零计算功能的自动售票机
+
+module top(
+    input clk,              // 100MHz时钟信号（引脚P17）
+    input s0,               // 销售额清零按键（引脚R11）
+    input s1,               // 1元投币按键（引脚R17）
+    input s2,               // 5元投币按键（引脚R15）
+    input s3,               // 10元投币按键（引脚V1）
+    input [3:0] sw,         // 车票选择拨码开关（SW0-SW3，对应引脚R1、N4、M4、R2）
+    input sw7,              // 交易确认按键（引脚P5）
+    output [7:0] an,        // 数码管阳极选择信号
+    output [7:0] duan0,      // 右侧数码管段选数据
+    output [7:0] duan1,     // 左侧数码管段选数据
+    output [3:0] led_ticket,// 车票出票指示LED（D1-D4）
+    output [7:0] led_alarm  // 报警指示LED（D9-D16）
+);
+
+    // 内部连线定义
+    wire clk_2Hz;           // 2Hz分频时钟
+    wire clk_scan;          // 数码管扫描时钟
+    wire clk_db;            // 消抖模块专用时钟
+    
+    // 消抖后的按键/开关信号
+    wire s0_db, s1_db, s2_db, s3_db;  // 消抖后的投币/清零按键
+    wire [3:0] sw_db;                 // 消抖后的车票选择开关
+    wire sw7_db;                      // 消抖后的确认按键
+    
+    // 售票逻辑模块输出信号
+    wire [7:0] display_val;   // 待显示数值（金额/找零等）
+    wire [7:0] total_sales;   // 总销售额
+    wire [3:0] ticket_out;    // 车票出票信号
+    wire alarm;               // 报警信号
+    wire [1:0] display_mode;  // 显示模式选择信号
+    
+    // 复位信号（由消抖后的S0按键产生）
+    wire rst = s0_db;
+    
+    // 时钟分频模块例化
+    clk_div u_clk_div(
+        .clk(clk),
+        .rst(s0),
+        .clk_2Hz(clk_2Hz),
+        .clk_scan(clk_scan),
+        .clk_db(clk_db)
+    );
+    
+    // 按键消抖模块例化
+    debounce u_debounce(
+        .clk_db(clk_db),
+        .rst(s0),
+        .s0_in(s0),
+        .s1_in(s1),
+        .s2_in(s2),
+        .s3_in(s3),
+        .sw_in(sw),
+        .sw7_in(sw7),
+        .s0_out(s0_db),
+        .s1_out(s1_db),
+        .s2_out(s2_db),
+        .s3_out(s3_db),
+        .sw_out(sw_db),
+        .sw7_out(sw7_db)
+    );
+    
+    // 售票逻辑模块例化
+    ticket_logic u_ticket(
+        .clk(clk_db),
+        .rst(rst),
+        .clear_sales(s0_db),
+        .coin_1(s1_db),
+        .coin_5(s2_db),
+        .coin_10(s3_db),
+        .ticket_sel(sw_db),
+        .confirm(sw7_db),
+        .display_val(display_val),
+        .total_sales(total_sales),
+        .ticket_out(ticket_out),
+        .alarm(alarm),
+        .display_mode(display_mode)
+    );
+    
+    // 显示驱动模块例化
+    display_driver u_display(
+        .clk_scan(clk_scan),
+        .clk_2Hz(clk_2Hz),
+        .rst(rst),
+        .display_val(display_val),
+        .total_sales(total_sales),
+        .display_mode(display_mode),
+        .alarm(alarm),
+        .an(an),
+        .duan0(duan0),
+        .duan1(duan1)
+    );
+    
+    // 输出信号赋值
+    assign led_ticket = ticket_out;
+    assign led_alarm = alarm ? 8'hFF : 8'h00;
+
+endmodule
