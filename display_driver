@@ -1,0 +1,114 @@
+// 售票机显示驱动模块
+// 在7段数码管上显示两位BCD码数值
+
+module display_driver(
+    input clk_scan,         // 1kHz数码管扫描时钟
+    input clk_2Hz,          // 2Hz闪烁控制时钟（报警用）
+    input rst,              // 高电平有效的复位信号
+    input [7:0] display_val,    // 待显示数值（票价/投币金额/找零）
+    input [7:0] total_sales,    // 总销售额
+    input [1:0] display_mode,   // 显示模式：0=票价 1=已投币金额 2=找零金额
+    input alarm,                // 报警信号（控制数码管闪烁）
+    output reg [7:0] an,        // 数码管阳极选择信号
+    output reg [7:0] duan0,      // 右侧数码管段选数据
+    output reg [7:0] duan1      // 左侧数码管段选数据
+);
+
+    // 数码管扫描计数器（控制8位阳极轮询）
+    reg [1:0] scan_cnt;
+    
+    // 当前待显示的个位/十位数字
+    reg [3:0] digit_right;  // 个位（右侧数码管）
+    reg [3:0] digit_left;   // 十位（左侧数码管）
+    
+    // 报警闪烁状态控制寄存器
+    reg flash_state;
+    
+    // 7段数码管段码解码函数
+    function [7:0] seg_decode;
+        input [3:0] digit;  // 输入BCD码数字（0-9）
+        begin
+            case (digit)
+                4'd0: seg_decode = 8'b11111100; // 数字0的段码
+                4'd1: seg_decode = 8'b01100000; // 数字1的段码
+                4'd2: seg_decode = 8'b11011010; // 数字2的段码
+                4'd3: seg_decode = 8'b11110010; // 数字3的段码
+                4'd4: seg_decode = 8'b01100110; // 数字4的段码
+                4'd5: seg_decode = 8'b10110110; // 数字5的段码
+                4'd6: seg_decode = 8'b10111110; // 数字6的段码
+                4'd7: seg_decode = 8'b11100000; // 数字7的段码
+                4'd8: seg_decode = 8'b11111110; // 数字8的段码
+                4'd9: seg_decode = 8'b11110110; // 数字9的段码
+                default: seg_decode = 8'b00000000; //
+            endcase
+        end
+    endfunction
+
+    // 闪烁状态更新（2Hz时钟驱动，控制报警时的亮灭切换）
+    always @(posedge clk_2Hz or posedge rst) begin
+        if (rst)
+            flash_state <= 1'b1; // 复位后默认亮
+        else
+            flash_state <= ~flash_state; // 电平翻转，实现2Hz闪烁
+    end
+
+    // 扫描计数器更新（1kHz时钟驱动，循环0-3）
+    always @(posedge clk_scan or posedge rst) begin
+        if (rst)
+            scan_cnt <= 2'd0;
+        else
+            scan_cnt <= scan_cnt + 1'b1;
+    end
+
+    // 显示布局定义：
+    // AN7-AN6：总销售额（十位、个位）
+    // AN5-AN4：显示模式指示位（预留）
+    // AN3-AN2：待显示数值（十位、个位）
+    // AN1-AN0：未使用
+    always @(posedge clk_scan or posedge rst) begin
+        if (rst) begin
+            an <= 8'b00000000;    // 复位后所有阳极关闭
+            digit_right <= 4'd0;
+            digit_left <= 4'd0;
+        end
+        else begin
+            case (scan_cnt)
+                2'd0: begin
+                    an <= 8'b00010100;              // 激活AN4 + AN2阳极
+                    digit_left <= 4'd0;             // 模式指示位占位（暂显示0）
+                    digit_right <= display_val % 10; // 待显示数值的个位
+                end
+                2'd1: begin
+                    an <= 8'b00101000;              // 激活AN5 + AN3阳极
+                    digit_left <= 4'd0;             // 模式指示位占位（暂显示0）
+                    digit_right <= display_val / 10; // 待显示数值的十位
+                end
+                2'd2: begin
+                    an <= 8'b01000000;              // 仅激活AN6阳极
+                    digit_left <= total_sales % 10; // 总销售额的个位
+                    digit_right <= 4'd0;
+                end
+                2'd3: begin
+                    an <= 8'b10000000;              // 仅激活AN7阳极
+                    digit_left <= total_sales / 10; // 总销售额的十位
+                    digit_right <= 4'd0;
+                end
+            endcase
+        end
+    end
+
+    // 段选输出（含报警闪烁控制）
+    always @(*) begin
+        // 报警触发且闪烁状态为灭时，数码管全暗
+        if (alarm && !flash_state) begin
+            duan = 8'b00000000;
+            duan1 = 8'b00000000;
+        end
+        else begin
+            // 正常显示：解码个位/十位数字为段码
+            duan0 = seg_decode(digit_right);
+            duan1 = seg_decode(digit_left);
+        end
+    end
+
+endmodule
