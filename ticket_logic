@@ -140,7 +140,7 @@ module ticket_logic(
                     
                     // 报警计时递减，计时结束后关闭报警
                     if (alarm_counter > 0) begin
-                        alarm_counter <=  - 1'b1;
+                        alarm_counter <= alarm_counter - 1'b1;
                     end
                     else begin
                         alarm <= 1'b0;              // 关闭报警
