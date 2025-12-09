@@ -1,0 +1,63 @@
+// 售票机时钟分频模块
+// 生成三类时钟：clk_2Hz（闪烁用）、clk_scan（显示扫描用）、clk_db（按键消抖用）
+// 输入：100MHz主时钟（引脚P17）
+
+module clk_div(
+    input clk,              // 100MHz输入时钟
+    input rst,              // 高电平有效的复位信号
+    output reg clk_2Hz,     // 2Hz时钟（用于报警灯闪烁）
+    output reg clk_scan,    // 1kHz时钟（用于数码管扫描显示）
+    output reg clk_db       // 100Hz时钟（用于按键消抖）
+);
+
+    // 分频计数器寄存器
+    reg [25:0] cnt_2Hz;     // 2Hz分频计数器：100MHz / 2Hz / 2 = 25000000（占空比50%需二分频）
+    reg [16:0] cnt_scan;    // 1kHz分频计数器：100MHz / 1kHz / 2 = 50000
+    reg [19:0] cnt_db;      // 100Hz消抖分频计数器：100MHz / 100Hz / 2 = 500000
+
+    // 2Hz时钟生成（用于报警灯闪烁）
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            cnt_2Hz <= 26'd0;
+            clk_2Hz <= 1'b0;
+        end
+        else if (cnt_2Hz >= 26'd24999_999) begin  // 计数到24999999（即25000000-1）
+            cnt_2Hz <= 26'd0;
+            clk_2Hz <= ~clk_2Hz;                 // 时钟电平翻转，生成50%占空比
+        end
+        else begin
+            cnt_2Hz <= cnt_2Hz + 1'b1;
+        end
+    end
+
+    // 1kHz时钟生成（用于数码管扫描显示）
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            cnt_scan <= 17'd0;
+            clk_scan <= 1'b0;
+        end
+        else if (cnt_scan >= 17'd49_999) begin    // 计数到49999（即50000-1）
+            cnt_scan <= 17'd0;
+            clk_scan <= ~clk_scan;
+        end
+        else begin
+            cnt_scan <= cnt_scan + 1'b1;
+        end
+    end
+
+    // 100Hz时钟生成（用于按键消抖）
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            cnt_db <= 20'd0;
+            clk_db <= 1'b0;
+        end
+        else if (cnt_db >= 20'd499_999) begin     // 计数到499999（即500000-1）
+            cnt_db <= 20'd0;
+            clk_db <= ~clk_db;
+        end
+        else begin
+            cnt_db <= cnt_db + 1'b1;
+        end
+    end
+
+endmodule
